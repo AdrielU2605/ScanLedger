@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# CI performs no live network scanning and no live CVE-provider calls. The test
+# suite runs with a process-wide socket block (backend/tests/conftest.py).
+jobs:
+  backend:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the primary target; Ubuntu proves the guard is not
+        # relying on Windows-specific socket behaviour.
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.11", "3.13"]
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Network boundary check (static)
+        run: python tools/check_network_imports.py
+
+      - name: Lint
+        run: |
+          python -m ruff check .
+          python -m ruff format --check .
+
+      - name: Type check
+        run: python -m mypy
+
+      - name: Tests
+        run: python -m pytest -q

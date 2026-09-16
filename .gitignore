@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment and local secrets - never commit the real .env
+.env
+.env.local
+
+# Local database and scan evidence - never commit evidence from any real network
+*.db
+*.db-wal
+*.db-shm
+scanledger.db*
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
