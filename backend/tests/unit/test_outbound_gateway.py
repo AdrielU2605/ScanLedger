@@ -44,9 +44,22 @@ def test_plain_http_is_refused(gateway: OutboundGateway) -> None:
 
 
 def test_identifying_user_agent_is_sent(gateway: OutboundGateway) -> None:
-    headers = gateway.headers()
+    headers = gateway.headers("https://services.nvd.nist.gov/rest/json/cves/2.0")
     assert "ScanLedger" in headers["User-Agent"]
     assert "github.com" in headers["User-Agent"]
+
+
+def test_an_api_key_is_sent_only_to_nvd() -> None:
+    """CISA has no use for an NVD key, and a key should not travel further than needed."""
+    keyed = OutboundGateway(user_agent=USER_AGENT, nvd_api_key="not-a-real-key")
+
+    to_nvd = keyed.headers("https://services.nvd.nist.gov/rest/json/cves/2.0")
+    to_cisa = keyed.headers(
+        "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    )
+
+    assert to_nvd["apiKey"] == "not-a-real-key"
+    assert "apiKey" not in to_cisa
 
 
 def test_redirects_are_off_by_default(gateway: OutboundGateway) -> None:
