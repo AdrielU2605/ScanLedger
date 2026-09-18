@@ -22,6 +22,8 @@ import pytest
 
 from app.guard.scanguard import NETWORK_GUARD_ACTIVE
 
+pytest_plugins = ["tests.conftest_db"]
+
 _real_socket_init = socket.socket.__init__
 
 BLOCK_MESSAGE = (
