@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.tables import CacheEntryRow, ScanRow
@@ -31,8 +32,11 @@ async def sweep_expired_cache(
 ) -> int:
     moment = now or datetime.now(UTC)
     async with session_factory() as session:
-        result = await session.execute(
-            delete(CacheEntryRow).where(CacheEntryRow.expires_at <= moment)
+        # A DML statement returns a CursorResult at runtime; the declared
+        # return type of Session.execute is the broader Result.
+        result = cast(
+            CursorResult[Any],
+            await session.execute(delete(CacheEntryRow).where(CacheEntryRow.expires_at <= moment)),
         )
         await session.commit()
         return int(result.rowcount or 0)

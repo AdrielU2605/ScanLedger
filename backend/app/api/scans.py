@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
@@ -153,6 +154,8 @@ async def scan_events(
     )
 
 
-def _format_event(sequence: int, event_type: str, module: str | None, payload: dict) -> str:
+def _format_event(
+    sequence: int, event_type: str, module: str | None, payload: dict[str, Any]
+) -> str:
     body = json.dumps({"module": module, **payload}, default=str)
     return f"id: {sequence}\nevent: {event_type}\ndata: {body}\n\n"

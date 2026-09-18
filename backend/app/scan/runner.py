@@ -19,8 +19,9 @@ import contextlib
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.ledger import DatabaseLedger
@@ -33,6 +34,7 @@ from app.models.domain import (
     TargetType,
 )
 from app.models.errors import AppError, ModuleError, WorkerAlreadyRunningError
+from app.models.findings import Finding
 from app.modules.base import ModuleContext
 from app.modules.registry import ModuleRegistry
 from app.scan.events import EventPublisher
@@ -139,14 +141,18 @@ class ScanRunner:
     async def recover_interrupted(self) -> int:
         """Turn crash leftovers into explicit interrupted state, then re-queue."""
         async with self._session_factory() as session:
-            interrupted = await session.execute(
-                update(ModuleRunRow)
-                .where(ModuleRunRow.status == str(ModuleStatus.RUNNING))
-                .values(
-                    status=str(ModuleStatus.INTERRUPTED),
-                    safe_error_message="the worker stopped before this module finished",
-                    finished_at=datetime.now(UTC),
-                )
+            # DML returns a CursorResult at runtime; execute() is declared as Result.
+            interrupted = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(ModuleRunRow)
+                    .where(ModuleRunRow.status == str(ModuleStatus.RUNNING))
+                    .values(
+                        status=str(ModuleStatus.INTERRUPTED),
+                        safe_error_message="the worker stopped before this module finished",
+                        finished_at=datetime.now(UTC),
+                    )
+                ),
             )
             await session.execute(
                 update(ScanRow)
@@ -203,14 +209,17 @@ class ScanRunner:
             if candidate is None:
                 return None
 
-            claimed = await session.execute(
-                update(ScanRow)
-                .where(ScanRow.id == candidate, ScanRow.status == str(ScanStatus.QUEUED))
-                .values(
-                    status=str(ScanStatus.RUNNING),
-                    claimed_by=self._owner_id,
-                    started_at=datetime.now(UTC),
-                )
+            claimed = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(ScanRow)
+                    .where(ScanRow.id == candidate, ScanRow.status == str(ScanStatus.QUEUED))
+                    .values(
+                        status=str(ScanStatus.RUNNING),
+                        claimed_by=self._owner_id,
+                        started_at=datetime.now(UTC),
+                    )
+                ),
             )
             await session.commit()
             if (claimed.rowcount or 0) != 1:
@@ -335,7 +344,7 @@ class ScanRunner:
             return await self._finish(scan_id, ScanStatus.COMPLETED_WITH_WARNINGS, None)
         return await self._finish(scan_id, ScanStatus.COMPLETED, None)
 
-    async def _store_findings(self, scan_id: str, findings: tuple) -> None:
+    async def _store_findings(self, scan_id: str, findings: tuple[Finding, ...]) -> None:
         if not findings:
             return
         async with self._session_factory() as session:
