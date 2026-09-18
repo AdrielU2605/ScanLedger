@@ -14,9 +14,11 @@ exactly one place - inside ``ScanGuard.connect``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import ipaddress
 import socket
+import ssl
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal
@@ -120,6 +122,38 @@ def _parse_scope_entry(raw: str) -> IPNetwork:
             f"{raw!r} is not a valid IP address or CIDR - scope profiles accept "
             "literal addresses and CIDRs only"
         ) from exc
+
+
+@dataclass(frozen=True)
+class TlsInfo:
+    """Raw TLS facts. Parsing the certificate is the caller's job.
+
+    The guard hands back bytes rather than a parsed certificate so that
+    certificate parsing - which handles untrusted, target-controlled data -
+    happens outside the boundary module, in code that cannot open a socket.
+    """
+
+    certificate_der: bytes | None
+    protocol: str | None
+    cipher: str | None
+
+
+@dataclass
+class GuardedStream:
+    """The only way a module reads from or writes to a target.
+
+    Modules never see a socket: they get these streams, so no module needs a
+    socket API of its own and the static boundary check stays strict.
+    """
+
+    reader: asyncio.StreamReader
+    writer: asyncio.StreamWriter
+    tls: TlsInfo | None = None
+
+    async def close(self) -> None:
+        self.writer.close()
+        with contextlib.suppress(Exception):
+            await self.writer.wait_closed()
 
 
 @dataclass(frozen=True)
@@ -231,6 +265,50 @@ class ScanGuard:
             outcome="connected",
         )
         return sock
+
+    async def open_stream(
+        self,
+        target: ValidatedTarget,
+        address: IPAddress,
+        port: int,
+        governor: IntensityGovernor,
+        *,
+        use_tls: bool = False,
+    ) -> GuardedStream:
+        """Open a guarded read/write stream, optionally upgraded to TLS.
+
+        The socket is created by ``connect`` and handed straight to asyncio,
+        so no new connection is opened here and every scope check has already
+        run. TLS verification is deliberately off: ScanLedger inspects the
+        certificate a lab host presents, it does not trust it, and a self
+        signed certificate must still be reportable rather than fatal.
+        """
+        sock = await self.connect(target, address, port, governor)
+
+        token = NETWORK_GUARD_ACTIVE.set(True)
+        try:
+            if not use_tls:
+                reader, writer = await asyncio.open_connection(sock=sock)
+                return GuardedStream(reader=reader, writer=writer)
+
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            reader, writer = await asyncio.open_connection(
+                sock=sock, ssl=context, server_hostname=str(address)
+            )
+            ssl_object = writer.get_extra_info("ssl_object")
+            tls = TlsInfo(
+                certificate_der=(ssl_object.getpeercert(binary_form=True) if ssl_object else None),
+                protocol=ssl_object.version() if ssl_object else None,
+                cipher=(ssl_object.cipher() or (None,))[0] if ssl_object else None,
+            )
+            return GuardedStream(reader=reader, writer=writer, tls=tls)
+        except BaseException:
+            sock.close()
+            raise
+        finally:
+            NETWORK_GUARD_ACTIVE.reset(token)
 
     async def _classify(
         self, raw_target: str

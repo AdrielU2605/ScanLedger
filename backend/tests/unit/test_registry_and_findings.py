@@ -35,19 +35,37 @@ class TestRegistry:
         with pytest.raises(ValueError, match="already registered"):
             registry.register(NoOpModule())
 
-    def test_builtin_registration_is_the_two_native_probe_modules(self) -> None:
+    def test_builtin_registration_is_only_native_guarded_modules(self) -> None:
         """Only native, guarded modules ship - no live external scanner."""
         from app.modules.registry import register_builtin_modules
 
         registry = register_builtin_modules(ModuleRegistry())
-        assert registry.names() == ("host_discovery", "port_scan")
+        assert registry.names() == (
+            "host_discovery",
+            "port_scan",
+            "protocol_enum",
+            "service_detect",
+        )
+
+    def test_modules_run_in_dependency_order_not_selection_order(self) -> None:
+        """Service detection is useless before the port scan that feeds it."""
+        from app.modules.registry import register_builtin_modules
+
+        registry = register_builtin_modules(ModuleRegistry())
+        by_order = sorted(registry.all(), key=lambda module: module.metadata.order)
+        assert [module.name for module in by_order] == [
+            "host_discovery",
+            "port_scan",
+            "service_detect",
+            "protocol_enum",
+        ]
 
     def test_builtin_registration_is_idempotent(self) -> None:
         from app.modules.registry import register_builtin_modules
 
         registry = register_builtin_modules(ModuleRegistry())
         register_builtin_modules(registry)
-        assert registry.names() == ("host_discovery", "port_scan")
+        assert len(registry.names()) == 4
 
     def test_catalog_marks_unsupported_target_types_not_applicable(self) -> None:
         class CidrOnlyModule(NoOpModule):

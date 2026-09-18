@@ -20,6 +20,15 @@ from app.models.domain import ModuleCategory, ModuleReadiness, TargetType
 from app.models.findings import Finding
 from app.scan.governor import IntensityGovernor
 
+__all__ = [
+    "MVP_RELEASE",
+    "NEXT_RELEASE",
+    "ModuleContext",
+    "ModuleMetadata",
+    "ModuleResult",
+    "ScanModule",
+]
+
 MVP_RELEASE = "mvp"
 NEXT_RELEASE = "1.1"
 
@@ -35,6 +44,10 @@ class ModuleMetadata:
     optional_dependency: str | None = None
     timeout_seconds: float = 120.0
     cache_ttl_seconds: int | None = None
+    # Modules run in ascending order regardless of the order they were
+    # selected in, because service detection is useless before the port scan
+    # that tells it which ports are open.
+    order: int = 50
 
 
 @dataclass
@@ -47,6 +60,17 @@ class ModuleContext:
     governor: IntensityGovernor
     is_cancel_requested: Callable[[], bool]
     options: dict[str, Any] = field(default_factory=dict)
+    # Findings produced earlier in this same scan. Service detection needs to
+    # know which ports the port scan found open, and reading them here keeps
+    # modules from reaching into the database themselves.
+    prior_findings: tuple[Finding, ...] = ()
+
+    def open_ports_by_host(self) -> dict[str, tuple[int, ...]]:
+        found: dict[str, list[int]] = {}
+        for finding in self.prior_findings:
+            if finding.kind == "port.open" and finding.port is not None:
+                found.setdefault(finding.host, []).append(finding.port)
+        return {host: tuple(sorted(ports)) for host, ports in found.items()}
 
 
 @dataclass(frozen=True)

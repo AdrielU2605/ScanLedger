@@ -55,6 +55,7 @@ class PortScanModule(ScanModule):
         category=ModuleCategory.PORT_SCAN,
         supported_targets=frozenset({TargetType.IP, TargetType.CIDR, TargetType.HOST}),
         timeout_seconds=1800.0,
+        order=20,
     )
 
     async def run(self, context: ModuleContext) -> ModuleResult:

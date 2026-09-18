@@ -38,6 +38,7 @@ class HostDiscoveryModule(ScanModule):
         category=ModuleCategory.DISCOVERY,
         supported_targets=frozenset({TargetType.IP, TargetType.CIDR, TargetType.HOST}),
         timeout_seconds=600.0,
+        order=10,
     )
 
     async def run(self, context: ModuleContext) -> ModuleResult:

@@ -33,29 +33,39 @@ BLOCK_MESSAGE = (
 
 _SELF_PIPE_FRAMES = 6
 
-# Windows has no AF_UNIX socketpair, so CPython falls back to a loopback pair;
-# the fallback helper is the frame that actually builds the socket.
-_SELF_PIPE_FUNCTIONS = frozenset({"socketpair", "_fallback_socketpair"})
+# Sockets the Python runtime must create for itself, identified by the exact
+# stdlib frame that creates them. Neither can carry an outbound connection to a
+# target, so exempting them does not widen what application code may do:
+#
+#   socketpair / _fallback_socketpair - asyncio's own self-pipe. Windows has no
+#       AF_UNIX socketpair, so CPython emulates one over loopback.
+#   _get_accept_socket - the socket a ProactorEventLoop server pre-creates to
+#       accept an INBOUND connection. It can only receive, never dial out.
+_STDLIB_INTERNAL_FRAMES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("socketpair", "/socket.py"),
+        ("_fallback_socketpair", "/socket.py"),
+        ("_get_accept_socket", "/windows_events.py"),
+    }
+)
 
 
-def _is_event_loop_self_pipe() -> bool:
-    """True when asyncio is building its own self-pipe via socket.socketpair().
+def _is_runtime_internal_socket() -> bool:
+    """True when the Python runtime is building a socket for its own plumbing.
 
-    On Windows there is no AF_UNIX socketpair, so the stdlib emulates one with a
-    real loopback AF_INET pair - which the block would otherwise refuse, leaving
-    no usable event loop. The exemption is deliberately narrow: it matches the
-    stdlib's own ``socketpair`` frame only, so ``asyncio.open_connection`` and
-    ``loop.create_connection`` (which build their sockets elsewhere) stay blocked.
+    Matched on the exact stdlib frame, so application code calling
+    ``asyncio.open_connection`` or ``loop.create_connection`` - which build
+    their sockets elsewhere - stays blocked.
     """
     frame = inspect.currentframe()
     for _ in range(_SELF_PIPE_FRAMES):
         if frame is None:
             return False
         code = frame.f_code
-        if code.co_name in _SELF_PIPE_FUNCTIONS and code.co_filename.replace("\\", "/").endswith(
-            "/socket.py"
-        ):
-            return True
+        filename = code.co_filename.replace("\\", "/")
+        for name, suffix in _STDLIB_INTERNAL_FRAMES:
+            if code.co_name == name and filename.endswith(suffix):
+                return True
         frame = frame.f_back
     return False
 
@@ -72,7 +82,7 @@ def _guarded_socket_init(
         and family in (socket.AF_INET, socket.AF_INET6)
         and type == socket.SOCK_STREAM
     )
-    if is_new_outbound_tcp and not NETWORK_GUARD_ACTIVE.get() and not _is_event_loop_self_pipe():
+    if is_new_outbound_tcp and not NETWORK_GUARD_ACTIVE.get() and not _is_runtime_internal_socket():
         raise RuntimeError(BLOCK_MESSAGE)
     _real_socket_init(self, family, type, proto, fileno)
 

@@ -86,9 +86,16 @@ def register_builtin_modules(registry: ModuleRegistry | None = None) -> ModuleRe
     """
     from app.modules.host_discovery import HostDiscoveryModule
     from app.modules.port_scan import PortScanModule
+    from app.modules.protocol_enum import ProtocolEnumModule
+    from app.modules.service_detect import ServiceDetectModule
 
     target = registry if registry is not None else default_registry
-    for module in (HostDiscoveryModule(), PortScanModule()):
+    for module in (
+        HostDiscoveryModule(),
+        PortScanModule(),
+        ServiceDetectModule(),
+        ProtocolEnumModule(),
+    ):
         if not target.has(module.name):
             target.register(module)
     return target

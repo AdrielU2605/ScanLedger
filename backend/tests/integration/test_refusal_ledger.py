@@ -106,9 +106,7 @@ class TestRefusalsAreProvable:
         everything = (await client.get("/api/ledger")).json()
         denied = (await client.get("/api/ledger", params={"decision": "denied"})).json()
         by_scope = (await client.get("/api/ledger", params={"scope_id": scope_id})).json()
-        other_scope = (
-            await client.get("/api/ledger", params={"scope_id": "no-such-scope"})
-        ).json()
+        other_scope = (await client.get("/api/ledger", params={"scope_id": "no-such-scope"})).json()
 
         assert everything["total"] >= 1
         assert denied["total"] == 1

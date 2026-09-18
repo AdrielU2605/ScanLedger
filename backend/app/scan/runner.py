@@ -290,8 +290,11 @@ class ScanRunner:
 
         any_success = False
         any_problem = False
+        produced: list[Finding] = []
 
-        for module_name in selected:
+        ordered = sorted(selected, key=lambda name: self._registry.get(name).metadata.order)
+
+        for module_name in ordered:
             if await self._cancel_requested(scan_id):
                 await self._mark_remaining_skipped(scan_id, "the scan was canceled")
                 return await self._finish(scan_id, ScanStatus.CANCELED, None)
@@ -323,6 +326,7 @@ class ScanRunner:
                 governor=governor,
                 is_cancel_requested=cancel_flag,
                 options=module_options,
+                prior_findings=tuple(produced),
             )
 
             try:
@@ -357,6 +361,7 @@ class ScanRunner:
                 any_success = True
                 if result.warnings:
                     any_problem = True
+                produced.extend(result.findings)
                 await self._store_findings(scan_id, result.findings)
                 await self._set_module_status(
                     scan_id,
