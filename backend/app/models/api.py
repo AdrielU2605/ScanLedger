@@ -131,6 +131,15 @@ class LedgerEntryRead(BaseModel):
     reason: str
     outcome: str
     recorded_at: datetime
+    scan_id: str | None = None
+    scope_id: str | None = None
+
+
+class LedgerList(BaseModel):
+    items: list[LedgerEntryRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class ErrorResponse(BaseModel):

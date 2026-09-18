@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.api import findings as findings_router
+from app.api import ledger as ledger_router
 from app.api import modules as modules_router
 from app.api import scans as scans_router
 from app.api import scopes as scopes_router
@@ -82,6 +83,7 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
     application.include_router(scopes_router.router)
     application.include_router(scans_router.router)
     application.include_router(findings_router.router)
+    application.include_router(ledger_router.router)
     return application
 
 

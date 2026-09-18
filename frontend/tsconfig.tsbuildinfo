@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/components/findingsview.tsx","./src/components/firstrunpanel.tsx","./src/components/scanlauncher.tsx","./src/components/scanprogress.tsx","./src/components/scopemanager.tsx","./vite.config.ts"],"version":"5.9.3"}

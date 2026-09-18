@@ -21,12 +21,14 @@ class DatabaseLedger:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         scan_id: str | None = None,
+        scope_id: str | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._scan_id = scan_id
+        self._scope_id = scope_id
 
     def for_scan(self, scan_id: str) -> DatabaseLedger:
-        return DatabaseLedger(self._session_factory, scan_id=scan_id)
+        return DatabaseLedger(self._session_factory, scan_id=scan_id, scope_id=self._scope_id)
 
     async def record(
         self,
@@ -42,6 +44,7 @@ class DatabaseLedger:
             session.add(
                 ScanLedgerRow(
                     scan_id=self._scan_id,
+                    scope_id=self._scope_id,
                     destination=destination,
                     port=port,
                     module=module,

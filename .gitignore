@@ -29,3 +29,6 @@ build/
 .idea/
 Thumbs.db
 desktop.ini
+
+# Frontend build output
+frontend/dist/

@@ -157,6 +157,9 @@ class ScanLedgerRow(Base):
     scan_id: Mapped[str | None] = mapped_column(
         ForeignKey("scans.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # A refusal at creation time has no scan, so the deciding scope is what
+    # keeps it attributable.
+    scope_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     destination: Mapped[str] = mapped_column(String(64), nullable=False)
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     module: Mapped[str] = mapped_column(String(64), nullable=False)

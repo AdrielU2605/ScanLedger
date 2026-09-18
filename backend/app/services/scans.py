@@ -72,7 +72,9 @@ async def create_scan(
     async with session_factory() as session:
         scope = await load_scope_profile(session, request.scope_id)
 
-    guard = ScanGuard(scope, DatabaseLedger(session_factory))
+    # A refusal below stops the scan from ever existing, so the ledger entry is
+    # attributed to the scope that made the decision instead.
+    guard = ScanGuard(scope, DatabaseLedger(session_factory, scope_id=request.scope_id))
     try:
         target = await guard.validate_target(request.target)
     except TargetRejected as exc:

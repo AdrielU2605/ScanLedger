@@ -45,6 +45,7 @@ HEARTBEAT_INTERVAL_SECONDS = 5.0
 LOCK_STALE_AFTER_SECONDS = 30.0
 POLL_INTERVAL_SECONDS = 0.25
 CANCEL_POLL_INTERVAL_SECONDS = 0.5
+FOOTPRINT_INTERVAL_SECONDS = 1.0
 
 
 class _CancelFlag:
@@ -257,6 +258,7 @@ class ScanRunner:
                 return await self._finish(
                     scan_id, ScanStatus.FAILED, "the scope profile for this scan no longer exists"
                 )
+            scope_id = scope_row.id
             selected = list(scan.selected_modules_json)
             module_options = dict(scan.module_options_json)
             target_input = scan.target_input
@@ -273,7 +275,7 @@ class ScanRunner:
             scan_id, ScanEventType.SCAN_STATUS, {"status": str(ScanStatus.RUNNING)}
         )
 
-        ledger = DatabaseLedger(self._session_factory, scan_id=scan_id)
+        ledger = DatabaseLedger(self._session_factory, scan_id=scan_id, scope_id=scope_id)
         guard = ScanGuard(scope, ledger)
         governor = IntensityGovernor(intensity)
 
@@ -310,6 +312,10 @@ class ScanRunner:
             # rather than only preventing the next module (PRD 2.3, FR-01).
             cancel_flag = _CancelFlag()
             cancel_watcher = asyncio.create_task(self._watch_for_cancel(scan_id, cancel_flag))
+            # Publish the footprint while the module runs, not only when it
+            # ends: UX-07 asks for a running count, and a port sweep can take
+            # minutes during which the user would otherwise see a stale number.
+            footprint_ticker = asyncio.create_task(self._stream_footprint(scan_id, governor))
             context = ModuleContext(
                 scan_id=scan_id,
                 target=target,
@@ -361,9 +367,10 @@ class ScanRunner:
                     reason="; ".join(result.warnings) if result.warnings else None,
                 )
             finally:
-                cancel_watcher.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await cancel_watcher
+                for task in (cancel_watcher, footprint_ticker):
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
 
             await self._publish_footprint(scan_id, governor)
 
@@ -385,6 +392,15 @@ class ScanRunner:
                 flag.set()
                 return
             await asyncio.sleep(CANCEL_POLL_INTERVAL_SECONDS)
+
+    async def _stream_footprint(self, scan_id: str, governor: IntensityGovernor) -> None:
+        last: tuple[int, int] | None = None
+        while True:
+            await asyncio.sleep(FOOTPRINT_INTERVAL_SECONDS)
+            current = (governor.hosts_touched, governor.probes_made)
+            if current != last:
+                last = current
+                await self._publish_footprint(scan_id, governor)
 
     async def _publish_footprint(self, scan_id: str, governor: IntensityGovernor) -> None:
         """How much of the lab this scan has actually touched so far (UX-07)."""
