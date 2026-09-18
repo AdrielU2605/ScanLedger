@@ -35,11 +35,19 @@ class TestRegistry:
         with pytest.raises(ValueError, match="already registered"):
             registry.register(NoOpModule())
 
-    def test_default_registry_has_no_modules_yet(self) -> None:
-        """CP2 ships orchestration only - real probe modules arrive in CP3."""
-        from app.modules.registry import default_registry
+    def test_builtin_registration_is_the_two_native_probe_modules(self) -> None:
+        """Only native, guarded modules ship - no live external scanner."""
+        from app.modules.registry import register_builtin_modules
 
-        assert default_registry.names() == ()
+        registry = register_builtin_modules(ModuleRegistry())
+        assert registry.names() == ("host_discovery", "port_scan")
+
+    def test_builtin_registration_is_idempotent(self) -> None:
+        from app.modules.registry import register_builtin_modules
+
+        registry = register_builtin_modules(ModuleRegistry())
+        register_builtin_modules(registry)
+        assert registry.names() == ("host_discovery", "port_scan")
 
     def test_catalog_marks_unsupported_target_types_not_applicable(self) -> None:
         class CidrOnlyModule(NoOpModule):

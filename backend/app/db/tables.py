@@ -69,6 +69,7 @@ class ScanRow(Base):
     resolved_addrs_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     intensity_profile: Mapped[str] = mapped_column(String(32), nullable=False)
     selected_modules_json: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    module_options_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=str(ScanStatus.QUEUED), index=True
     )

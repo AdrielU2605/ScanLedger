@@ -98,6 +98,7 @@ async def create_scan(
             resolved_addrs_json=resolved,
             intensity_profile=request.intensity_profile,
             selected_modules_json=list(request.modules),
+            module_options_json=dict(request.module_options),
             status=str(ScanStatus.QUEUED),
             note=request.note,
             attestation_text=ATTESTATION_TEXT,

@@ -13,7 +13,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from app.guard.scanguard import ScanGuard, ValidatedTarget
 from app.models.domain import ModuleCategory, ModuleReadiness, TargetType
@@ -46,6 +46,7 @@ class ModuleContext:
     guard: ScanGuard
     governor: IntensityGovernor
     is_cancel_requested: Callable[[], bool]
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

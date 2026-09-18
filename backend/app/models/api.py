@@ -49,6 +49,7 @@ class ScanCreate(BaseModel):
     intensity_profile: str = "polite"
     note: str | None = Field(default=None, max_length=2000)
     attestation_accepted: bool = False
+    module_options: dict[str, Any] = Field(default_factory=dict)
 
 
 class ModuleRunRead(BaseModel):
@@ -96,6 +97,40 @@ class ScanList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class FindingRead(BaseModel):
+    id: str
+    host: str
+    port: int | None
+    category: str
+    kind: str
+    title: str
+    summary: str
+    normalized_value: dict[str, Any]
+    raw_evidence: str | None
+    module: str
+    observed_at: datetime
+    confidence: str | None
+    sources: list[str]
+    fingerprint: str
+
+
+class FindingList(BaseModel):
+    items: list[FindingRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class LedgerEntryRead(BaseModel):
+    destination: str
+    port: int | None
+    module: str
+    decision: str
+    reason: str
+    outcome: str
+    recorded_at: datetime
 
 
 class ErrorResponse(BaseModel):

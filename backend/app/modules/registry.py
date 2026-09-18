@@ -76,3 +76,19 @@ class ModuleRegistry:
 
 
 default_registry = ModuleRegistry()
+
+
+def register_builtin_modules(registry: ModuleRegistry | None = None) -> ModuleRegistry:
+    """Register the native MVP probe modules.
+
+    Imported here rather than at module scope so the registry stays importable
+    by tests that want an empty one.
+    """
+    from app.modules.host_discovery import HostDiscoveryModule
+    from app.modules.port_scan import PortScanModule
+
+    target = registry if registry is not None else default_registry
+    for module in (HostDiscoveryModule(), PortScanModule()):
+        if not target.has(module.name):
+            target.register(module)
+    return target

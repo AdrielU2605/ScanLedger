@@ -44,6 +44,25 @@ from app.services.retention import DEFAULT_RETENTION_DAYS, run_retention
 HEARTBEAT_INTERVAL_SECONDS = 5.0
 LOCK_STALE_AFTER_SECONDS = 30.0
 POLL_INTERVAL_SECONDS = 0.25
+CANCEL_POLL_INTERVAL_SECONDS = 0.5
+
+
+class _CancelFlag:
+    """A cheap cancel check a module can call between probes.
+
+    The database is polled by one watcher task instead of by every probe, so a
+    scan sweeping thousands of ports does not turn cancellation into thousands
+    of queries.
+    """
+
+    def __init__(self) -> None:
+        self._set = False
+
+    def set(self) -> None:
+        self._set = True
+
+    def __call__(self) -> bool:
+        return self._set
 
 
 def _hostname() -> str:
@@ -239,6 +258,7 @@ class ScanRunner:
                     scan_id, ScanStatus.FAILED, "the scope profile for this scan no longer exists"
                 )
             selected = list(scan.selected_modules_json)
+            module_options = dict(scan.module_options_json)
             target_input = scan.target_input
             target_type = TargetType(scan.target_type)
             intensity = scan.intensity_profile
@@ -285,12 +305,18 @@ class ScanRunner:
                 continue
 
             await self._set_module_status(scan_id, module_name, ModuleStatus.RUNNING)
+
+            # Polled by long-running modules so a cancel stops in-flight work
+            # rather than only preventing the next module (PRD 2.3, FR-01).
+            cancel_flag = _CancelFlag()
+            cancel_watcher = asyncio.create_task(self._watch_for_cancel(scan_id, cancel_flag))
             context = ModuleContext(
                 scan_id=scan_id,
                 target=target,
                 guard=guard,
                 governor=governor,
-                is_cancel_requested=lambda: False,
+                is_cancel_requested=cancel_flag,
+                options=module_options,
             )
 
             try:
@@ -323,6 +349,8 @@ class ScanRunner:
                 )
             else:
                 any_success = True
+                if result.warnings:
+                    any_problem = True
                 await self._store_findings(scan_id, result.findings)
                 await self._set_module_status(
                     scan_id,
@@ -330,7 +358,14 @@ class ScanRunner:
                     ModuleStatus.DONE,
                     finding_count=len(result.findings),
                     cache_hit=result.cache_hit,
+                    reason="; ".join(result.warnings) if result.warnings else None,
                 )
+            finally:
+                cancel_watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await cancel_watcher
+
+            await self._publish_footprint(scan_id, governor)
 
         if await self._cancel_requested(scan_id):
             await self._mark_remaining_skipped(scan_id, "the scan was canceled")
@@ -343,6 +378,24 @@ class ScanRunner:
         if any_problem:
             return await self._finish(scan_id, ScanStatus.COMPLETED_WITH_WARNINGS, None)
         return await self._finish(scan_id, ScanStatus.COMPLETED, None)
+
+    async def _watch_for_cancel(self, scan_id: str, flag: _CancelFlag) -> None:
+        while True:
+            if await self._cancel_requested(scan_id):
+                flag.set()
+                return
+            await asyncio.sleep(CANCEL_POLL_INTERVAL_SECONDS)
+
+    async def _publish_footprint(self, scan_id: str, governor: IntensityGovernor) -> None:
+        """How much of the lab this scan has actually touched so far (UX-07)."""
+        await self._events.publish(
+            scan_id,
+            ScanEventType.FOOTPRINT,
+            {
+                "hosts_probed": governor.hosts_touched,
+                "ports_touched": governor.probes_made,
+            },
+        )
 
     async def _store_findings(self, scan_id: str, findings: tuple[Finding, ...]) -> None:
         if not findings:

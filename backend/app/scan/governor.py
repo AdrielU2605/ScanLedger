@@ -141,6 +141,11 @@ class IntensityGovernor:
     def probes_made(self) -> int:
         return self._scan_count
 
+    @property
+    def hosts_touched(self) -> int:
+        """Distinct destinations contacted - the scan's footprint (UX-07)."""
+        return len(self._host_counts)
+
     def probes_made_against(self, host: str) -> int:
         return self._host_counts.get(host, 0)
 

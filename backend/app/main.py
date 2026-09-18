@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api import findings as findings_router
 from app.api import modules as modules_router
 from app.api import scans as scans_router
 from app.api import scopes as scopes_router
@@ -21,13 +22,14 @@ from app.api.deps import AppState
 from app.config import APP_NAME, APP_VERSION, ProviderSettings, Settings
 from app.db.session import create_engine, create_session_factory, verify_fts5_available
 from app.models.errors import AppError
-from app.modules.registry import default_registry
+from app.modules.registry import default_registry, register_builtin_modules
 from app.scan.events import EventPublisher
 from app.scan.runner import ScanRunner
 from app.services.retention import DEFAULT_RETENTION_DAYS
 
 
 def build_state(settings: Settings) -> AppState:
+    register_builtin_modules()
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
     events = EventPublisher(session_factory)
@@ -79,6 +81,7 @@ def create_app(settings: Settings | None = None, *, state: AppState | None = Non
     application.include_router(modules_router.router)
     application.include_router(scopes_router.router)
     application.include_router(scans_router.router)
+    application.include_router(findings_router.router)
     return application
 
 
