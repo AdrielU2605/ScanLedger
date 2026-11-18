@@ -20,12 +20,14 @@ from app.api import modules as modules_router
 from app.api import scans as scans_router
 from app.api import scopes as scopes_router
 from app.api.deps import AppState
-from app.config import APP_NAME, APP_VERSION, ProviderSettings, Settings
+from app.config import APP_NAME, APP_VERSION, USER_AGENT, ProviderSettings, Settings
 from app.db.session import create_engine, create_session_factory, verify_fts5_available
 from app.models.errors import AppError
 from app.modules.registry import default_registry, register_builtin_modules
 from app.scan.events import EventPublisher
 from app.scan.runner import ScanRunner
+from app.services.cache import ResponseCache
+from app.services.outbound import OutboundGateway
 from app.services.retention import DEFAULT_RETENTION_DAYS
 
 
@@ -34,10 +36,13 @@ def build_state(settings: Settings) -> AppState:
     engine = create_engine(settings.database_url)
     session_factory = create_session_factory(engine)
     events = EventPublisher(session_factory)
+    providers = ProviderSettings()
     runner = ScanRunner(
         session_factory,
         default_registry,
         events,
+        gateway=OutboundGateway(user_agent=USER_AGENT, nvd_api_key=providers.nvd_api_key),
+        cache=ResponseCache(session_factory),
         retention_days=DEFAULT_RETENTION_DAYS,
     )
     return AppState(

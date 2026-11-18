@@ -84,6 +84,7 @@ def register_builtin_modules(registry: ModuleRegistry | None = None) -> ModuleRe
     Imported here rather than at module scope so the registry stays importable
     by tests that want an empty one.
     """
+    from app.modules.cve_correlate import CveCorrelateModule
     from app.modules.host_discovery import HostDiscoveryModule
     from app.modules.port_scan import PortScanModule
     from app.modules.protocol_enum import ProtocolEnumModule
@@ -95,6 +96,7 @@ def register_builtin_modules(registry: ModuleRegistry | None = None) -> ModuleRe
         PortScanModule(),
         ServiceDetectModule(),
         ProtocolEnumModule(),
+        CveCorrelateModule(),
     ):
         if not target.has(module.name):
             target.register(module)

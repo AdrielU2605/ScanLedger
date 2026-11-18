@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -26,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.ledger import DatabaseLedger
 from app.db.tables import FindingRow, ModuleRunRow, ScanRow, ScopeProfileRow, WorkerLockRow
-from app.guard.scanguard import ScanGuard, ScopeProfile, TargetRejected
+from app.guard.scanguard import ScanGuard, ScopeProfile, TargetRejected, ValidatedTarget
 from app.models.domain import (
     ModuleStatus,
     ScanEventType,
@@ -39,6 +40,8 @@ from app.modules.base import ModuleContext
 from app.modules.registry import ModuleRegistry
 from app.scan.events import EventPublisher
 from app.scan.governor import BudgetExceeded, IntensityGovernor
+from app.services.cache import ResponseCache
+from app.services.outbound import OutboundGateway
 from app.services.retention import DEFAULT_RETENTION_DAYS, run_retention
 
 HEARTBEAT_INTERVAL_SECONDS = 5.0
@@ -46,6 +49,13 @@ LOCK_STALE_AFTER_SECONDS = 30.0
 POLL_INTERVAL_SECONDS = 0.25
 CANCEL_POLL_INTERVAL_SECONDS = 0.5
 FOOTPRINT_INTERVAL_SECONDS = 1.0
+
+
+@dataclass
+class _PhaseOutcome:
+    any_success: bool = False
+    any_problem: bool = False
+    canceled: bool = False
 
 
 class _CancelFlag:
@@ -83,12 +93,16 @@ class ScanRunner:
         registry: ModuleRegistry,
         events: EventPublisher,
         *,
+        gateway: OutboundGateway | None = None,
+        cache: ResponseCache | None = None,
         retention_days: int = DEFAULT_RETENTION_DAYS,
         poll_interval: float = POLL_INTERVAL_SECONDS,
     ) -> None:
         self._session_factory = session_factory
         self._registry = registry
         self._events = events
+        self._gateway = gateway
+        self._cache = cache if cache is not None else ResponseCache(session_factory)
         self._retention_days = retention_days
         self._poll_interval = poll_interval
         self._owner_id = str(uuid.uuid4())
@@ -288,16 +302,62 @@ class ScanRunner:
                 scan_id, ScanStatus.FAILED, f"target refused at dispatch: {exc.reason}"
             )
 
-        any_success = False
-        any_problem = False
         produced: list[Finding] = []
-
         ordered = sorted(selected, key=lambda name: self._registry.get(name).metadata.order)
 
-        for module_name in ordered:
+        # Modules that hold the scan open, and those that do not. CVE
+        # correlation is paced by a provider's rate limit, so making the user
+        # wait on it would misrepresent a finished scan as still running.
+        blocking = [n for n in ordered if self._registry.get(n).metadata.blocks_scan_completion]
+        trailing = [n for n in ordered if n not in blocking]
+
+        outcome = await self._run_modules(
+            blocking, scan_id, target, target_type, guard, governor, module_options, produced
+        )
+
+        if outcome.canceled or await self._cancel_requested(scan_id):
+            await self._mark_remaining_skipped(scan_id, "the scan was canceled")
+            return await self._finish(scan_id, ScanStatus.CANCELED, None)
+
+        if not outcome.any_success:
+            status = ScanStatus.FAILED
+            reason: str | None = "no module produced a valid terminal result"
+        elif outcome.any_problem:
+            status = ScanStatus.COMPLETED_WITH_WARNINGS
+            reason = None
+        else:
+            status = ScanStatus.COMPLETED
+            reason = None
+
+        await self._finish(scan_id, status, reason)
+
+        if trailing:
+            # The scan is already terminal. These modules keep filling in
+            # results behind it and can never change its status - a provider
+            # failure must not retroactively fail a completed scan.
+            await self._run_modules(
+                trailing, scan_id, target, target_type, guard, governor, module_options, produced
+            )
+
+        return status
+
+    async def _run_modules(
+        self,
+        module_names: list[str],
+        scan_id: str,
+        target: ValidatedTarget,
+        target_type: TargetType,
+        guard: ScanGuard,
+        governor: IntensityGovernor,
+        module_options: dict[str, Any],
+        produced: list[Finding],
+    ) -> _PhaseOutcome:
+        outcome = _PhaseOutcome()
+
+        for module_name in module_names:
             if await self._cancel_requested(scan_id):
-                await self._mark_remaining_skipped(scan_id, "the scan was canceled")
-                return await self._finish(scan_id, ScanStatus.CANCELED, None)
+                outcome.canceled = True
+                return outcome
 
             module = self._registry.get(module_name)
             if not module.applies_to(target_type):
@@ -327,6 +387,8 @@ class ScanRunner:
                 is_cancel_requested=cancel_flag,
                 options=module_options,
                 prior_findings=tuple(produced),
+                gateway=self._gateway,
+                cache=self._cache,
             )
 
             try:
@@ -334,7 +396,7 @@ class ScanRunner:
                     module.run(context), timeout=module.metadata.timeout_seconds
                 )
             except TimeoutError:
-                any_problem = True
+                outcome.any_problem = True
                 await self._set_module_status(
                     scan_id,
                     module_name,
@@ -343,7 +405,7 @@ class ScanRunner:
                     code="module_timeout",
                 )
             except BudgetExceeded as exc:
-                any_problem = True
+                outcome.any_problem = True
                 await self._set_module_status(
                     scan_id,
                     module_name,
@@ -352,15 +414,15 @@ class ScanRunner:
                     code="budget_exceeded",
                 )
             except (ModuleError, TargetRejected) as exc:
-                any_problem = True
+                outcome.any_problem = True
                 code = exc.code if isinstance(exc, AppError) else "target_out_of_scope"
                 await self._set_module_status(
                     scan_id, module_name, ModuleStatus.FAILED, reason=str(exc), code=str(code)
                 )
             else:
-                any_success = True
+                outcome.any_success = True
                 if result.warnings:
-                    any_problem = True
+                    outcome.any_problem = True
                 produced.extend(result.findings)
                 await self._store_findings(scan_id, result.findings)
                 await self._set_module_status(
@@ -379,17 +441,7 @@ class ScanRunner:
 
             await self._publish_footprint(scan_id, governor)
 
-        if await self._cancel_requested(scan_id):
-            await self._mark_remaining_skipped(scan_id, "the scan was canceled")
-            return await self._finish(scan_id, ScanStatus.CANCELED, None)
-
-        if not any_success:
-            return await self._finish(
-                scan_id, ScanStatus.FAILED, "no module produced a valid terminal result"
-            )
-        if any_problem:
-            return await self._finish(scan_id, ScanStatus.COMPLETED_WITH_WARNINGS, None)
-        return await self._finish(scan_id, ScanStatus.COMPLETED, None)
+        return outcome
 
     async def _watch_for_cancel(self, scan_id: str, flag: _CancelFlag) -> None:
         while True:

@@ -19,6 +19,8 @@ from app.guard.scanguard import ScanGuard, ValidatedTarget
 from app.models.domain import ModuleCategory, ModuleReadiness, TargetType
 from app.models.findings import Finding
 from app.scan.governor import IntensityGovernor
+from app.services.cache import ResponseCache
+from app.services.outbound import OutboundGateway
 
 __all__ = [
     "MVP_RELEASE",
@@ -48,6 +50,9 @@ class ModuleMetadata:
     # selected in, because service detection is useless before the port scan
     # that tells it which ports are open.
     order: int = 50
+    # False for modules whose pace depends on something outside ScanLedger's
+    # control - a rate-limited provider should not hold a finished scan open.
+    blocks_scan_completion: bool = True
 
 
 @dataclass
@@ -64,6 +69,10 @@ class ModuleContext:
     # know which ports the port scan found open, and reading them here keeps
     # modules from reaching into the database themselves.
     prior_findings: tuple[Finding, ...] = ()
+    # Only correlation uses these, and only to reach CVE providers - never a
+    # scanned host. They are separate from the guard on purpose.
+    gateway: OutboundGateway | None = None
+    cache: ResponseCache | None = None
 
     def open_ports_by_host(self) -> dict[str, tuple[int, ...]]:
         found: dict[str, list[int]] = {}

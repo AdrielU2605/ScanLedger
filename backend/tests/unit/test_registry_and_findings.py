@@ -41,6 +41,7 @@ class TestRegistry:
 
         registry = register_builtin_modules(ModuleRegistry())
         assert registry.names() == (
+            "cve_correlate",
             "host_discovery",
             "port_scan",
             "protocol_enum",
@@ -58,14 +59,25 @@ class TestRegistry:
             "port_scan",
             "service_detect",
             "protocol_enum",
+            "cve_correlate",
         ]
+
+    def test_only_correlation_lets_the_scan_finish_without_it(self) -> None:
+        """A provider's rate limit must not hold a finished scan open."""
+        from app.modules.registry import register_builtin_modules
+
+        registry = register_builtin_modules(ModuleRegistry())
+        trailing = [
+            module.name for module in registry.all() if not module.metadata.blocks_scan_completion
+        ]
+        assert trailing == ["cve_correlate"]
 
     def test_builtin_registration_is_idempotent(self) -> None:
         from app.modules.registry import register_builtin_modules
 
         registry = register_builtin_modules(ModuleRegistry())
         register_builtin_modules(registry)
-        assert len(registry.names()) == 4
+        assert len(registry.names()) == 5
 
     def test_catalog_marks_unsupported_target_types_not_applicable(self) -> None:
         class CidrOnlyModule(NoOpModule):
